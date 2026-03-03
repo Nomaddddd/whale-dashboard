@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -7,21 +8,46 @@ const { analyzeSymbol } = require('./analysis/whale-detector');
 
 const app = express();
 app.use(cors());
+
+// --- Basic Auth middleware ---
+const AUTH_USER = process.env.AUTH_USER || 'admin';
+const AUTH_PASS = process.env.AUTH_PASS || 'cCm0X0EUPAFlak/w';
+
+app.use((req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="Whale Dashboard"');
+    return res.status(401).send('Authentication required');
+  }
+  const [user, pass] = Buffer.from(auth.split(' ')[1], 'base64').toString().split(':');
+  if (user === AUTH_USER && pass === AUTH_PASS) return next();
+  res.set('WWW-Authenticate', 'Basic realm="Whale Dashboard"');
+  return res.status(401).send('Invalid credentials');
+});
+
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Cache
-const cache = {};
+// --- Cache with TTL and max-size eviction ---
+const cache = new Map();
 const CACHE_TTL = 30_000;
+const CACHE_MAX_SIZE = 500;
+
 async function cached(key, fn) {
   const now = Date.now();
-  if (cache[key] && now - cache[key].ts < CACHE_TTL) return cache[key].data;
+  const entry = cache.get(key);
+  if (entry && now - entry.ts < CACHE_TTL) return entry.data;
   try {
     const data = await fn();
-    cache[key] = { data, ts: now };
+    // Evict oldest entries when cache exceeds max size
+    if (cache.size >= CACHE_MAX_SIZE) {
+      const oldest = cache.keys().next().value;
+      cache.delete(oldest);
+    }
+    cache.set(key, { data, ts: now });
     return data;
   } catch (e) {
     console.error(`[cache] ${key}:`, e.message);
-    return cache[key]?.data || null;
+    return entry?.data || null;
   }
 }
 
@@ -30,6 +56,30 @@ const TOP_SYMBOLS = [
   'DOT','PEPE','NEAR','WIF','FIL','ARB','OP','APT','TIA','AAVE',
   'UNI','TON','ATOM','INJ','SEI','JUP','PENDLE','RENDER','WLD','FET',
 ];
+
+const TIME_RANGE_CONFIG = {
+  '15m': { bnOiPeriod: '5m', bnOiLimit: 3, klInterval: '1m', klLimit: 15, lsPeriod: '5m', lsLimit: 3, takerPeriod: '5m', takerLimit: 3, fundingLimit: 5 },
+  '30m': { bnOiPeriod: '5m', bnOiLimit: 6, klInterval: '1m', klLimit: 30, lsPeriod: '5m', lsLimit: 6, takerPeriod: '5m', takerLimit: 6, fundingLimit: 5 },
+  '1h':  { bnOiPeriod: '5m', bnOiLimit: 12, klInterval: '5m', klLimit: 12, lsPeriod: '5m', lsLimit: 12, takerPeriod: '5m', takerLimit: 12, fundingLimit: 5 },
+  '4h':  { bnOiPeriod: '15m', bnOiLimit: 16, klInterval: '15m', klLimit: 16, lsPeriod: '15m', lsLimit: 16, takerPeriod: '15m', takerLimit: 16, fundingLimit: 10 },
+  '12h': { bnOiPeriod: '30m', bnOiLimit: 24, klInterval: '30m', klLimit: 24, lsPeriod: '30m', lsLimit: 24, takerPeriod: '30m', takerLimit: 24, fundingLimit: 15 },
+  '24h': { bnOiPeriod: '1h', bnOiLimit: 24, klInterval: '1h', klLimit: 24, lsPeriod: '1h', lsLimit: 24, takerPeriod: '1h', takerLimit: 24, fundingLimit: 20 },
+  '3d':  { bnOiPeriod: '4h', bnOiLimit: 18, klInterval: '4h', klLimit: 18, lsPeriod: '4h', lsLimit: 18, takerPeriod: '4h', takerLimit: 18, fundingLimit: 30 },
+  '7d':  { bnOiPeriod: '4h', bnOiLimit: 42, klInterval: '4h', klLimit: 42, lsPeriod: '4h', lsLimit: 42, takerPeriod: '4h', takerLimit: 42, fundingLimit: 30 },
+};
+
+// --- Input validation helper ---
+function validateSymbol(sym) {
+  return /^[A-Z0-9]{1,20}$/.test(sym);
+}
+
+function timeRangeToMs(range) {
+  const value = Number.parseInt(range, 10);
+  if (range.endsWith('m')) return value * 60 * 1000;
+  if (range.endsWith('h')) return value * 60 * 60 * 1000;
+  if (range.endsWith('d')) return value * 24 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000;
+}
 
 // === Main dashboard (Coinglass aggregated view) ===
 app.get('/api/dashboard', async (req, res) => {
@@ -40,15 +90,18 @@ app.get('/api/dashboard', async (req, res) => {
       cached('fearGreed', cg.getFearGreed),
     ]);
 
-    // Coinglass OI + Funding per exchange (sequential for rate limit)
-    const cgData = {};
-    for (const sym of TOP_SYMBOLS.slice(0, 20)) {
-      const [oi, funding] = await Promise.all([
+    // Coinglass OI + Funding — batched parallel with concurrency limit
+    const symbols = TOP_SYMBOLS.slice(0, 20);
+    const cgResults = await Promise.all(
+      symbols.map(sym => Promise.all([
         cached(`cg-oi-${sym}`, () => cg.getOIByExchange(sym)),
         cached(`cg-fr-${sym}`, () => cg.getFundingByExchange(sym)),
-      ]);
-      cgData[sym] = { oi, funding };
-    }
+      ]))
+    );
+    const cgData = {};
+    symbols.forEach((sym, i) => {
+      cgData[sym] = { oi: cgResults[i][0], funding: cgResults[i][1] };
+    });
 
     const coins = {};
     for (const sym of TOP_SYMBOLS) {
@@ -91,7 +144,7 @@ app.get('/api/dashboard', async (req, res) => {
 
     res.json({ ok: true, ts: Date.now(), coins, fearGreed });
   } catch (e) {
-    console.error(e);
+    console.error('[dashboard]', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -100,55 +153,62 @@ app.get('/api/dashboard', async (req, res) => {
 app.get('/api/analyze/:symbol', async (req, res) => {
   try {
     const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) {
+      return res.status(400).json({ ok: false, error: 'Invalid symbol' });
+    }
+    const queryTimeRange = typeof req.query.timeRange === 'string' ? req.query.timeRange : '24h';
+    const timeRange = Object.prototype.hasOwnProperty.call(TIME_RANGE_CONFIG, queryTimeRange) ? queryTimeRange : '24h';
+    const cfg = TIME_RANGE_CONFIG[timeRange];
 
     // Fetch from each exchange in parallel
     const [bnData, okxData, hlData, asterData, cgLiqs, cgTransfers] = await Promise.all([
       // Binance
       (async () => {
         const [oiHist, frHist, klines, ls, taker, ticker] = await Promise.all([
-          cached(`bn-oi-${sym}`, () => Binance.getOIHistory(sym, '1h', 48)),
-          cached(`bn-fr-${sym}`, () => Binance.getFundingHistory(sym, 30)),
-          cached(`bn-kl-${sym}`, () => Binance.getKlines(sym, '1h', 48)),
-          cached(`bn-ls-${sym}`, () => Binance.getLSRatio(sym, '1h', 24)),
-          cached(`bn-tk-${sym}`, () => Binance.getTakerVolume(sym, '1h', 24)),
-          cached(`bn-24h-${sym}`, () => Binance.get24hTicker(sym)),
+          cached(`bn-oi-${sym}-${timeRange}`, () => Binance.getOIHistory(sym, cfg.bnOiPeriod, cfg.bnOiLimit)),
+          cached(`bn-fr-${sym}-${timeRange}`, () => Binance.getFundingHistory(sym, cfg.fundingLimit)),
+          cached(`bn-kl-${sym}-${timeRange}`, () => Binance.getKlines(sym, cfg.klInterval, cfg.klLimit)),
+          cached(`bn-ls-${sym}-${timeRange}`, () => Binance.getLSRatio(sym, cfg.lsPeriod, cfg.lsLimit)),
+          cached(`bn-tk-${sym}-${timeRange}`, () => Binance.getTakerVolume(sym, cfg.takerPeriod, cfg.takerLimit)),
+          cached(`bn-24h-${sym}-${timeRange}`, () => Binance.get24hTicker(sym)),
         ]);
         return { oiHistory: oiHist, fundingHistory: frHist, klines, lsRatio: ls, takerVolume: taker, ticker };
       })(),
       // OKX
       (async () => {
         const [oi, oiHist, fr, frHist, liqs, ls, taker] = await Promise.all([
-          cached(`okx-oi-${sym}`, () => OKX.getOI(sym)),
-          cached(`okx-oih-${sym}`, () => OKX.getOIHistory(sym)),
-          cached(`okx-fr-${sym}`, () => OKX.getFundingRate(sym)),
-          cached(`okx-frh-${sym}`, () => OKX.getFundingHistory(sym, 30)),
-          cached(`okx-liq-${sym}`, () => OKX.getLiquidations(sym)),
-          cached(`okx-ls-${sym}`, () => OKX.getLSRatio(sym)),
-          cached(`okx-tk-${sym}`, () => OKX.getTakerVolume(sym)),
+          cached(`okx-oi-${sym}-${timeRange}`, () => OKX.getOI(sym)),
+          cached(`okx-oih-${sym}-${timeRange}`, () => OKX.getOIHistory(sym)),
+          cached(`okx-fr-${sym}-${timeRange}`, () => OKX.getFundingRate(sym)),
+          cached(`okx-frh-${sym}-${timeRange}`, () => OKX.getFundingHistory(sym, cfg.fundingLimit)),
+          cached(`okx-liq-${sym}-${timeRange}`, () => OKX.getLiquidations(sym)),
+          cached(`okx-ls-${sym}-${timeRange}`, () => OKX.getLSRatio(sym)),
+          cached(`okx-tk-${sym}-${timeRange}`, () => OKX.getTakerVolume(sym)),
         ]);
         return { oi, oiHistory: oiHist, funding: fr, fundingHistory: frHist, liquidations: liqs?.slice(0, 30), lsRatio: ls, takerVolume: taker };
       })(),
       // Hyperliquid
       (async () => {
+        const hlFundingStartTime = Date.now() - timeRangeToMs(timeRange);
         const [market, frHist, trades] = await Promise.all([
-          cached(`hl-market-${sym}`, () => Hyperliquid.getMarket(sym)),
-          cached(`hl-fr-${sym}`, () => Hyperliquid.getFundingHistory(sym).catch(() => null)),
-          cached(`hl-trades-${sym}`, () => Hyperliquid.getRecentTrades(sym).catch(() => null)),
+          cached(`hl-market-${sym}-${timeRange}`, () => Hyperliquid.getMarket(sym)),
+          cached(`hl-fr-${sym}-${timeRange}`, () => Hyperliquid.getFundingHistory(sym, hlFundingStartTime).catch(() => null)),
+          cached(`hl-trades-${sym}-${timeRange}`, () => Hyperliquid.getRecentTrades(sym).catch(() => null)),
         ]);
-        return { market, fundingHistory: frHist?.slice(-30), recentTrades: trades };
+        return { market, fundingHistory: frHist, recentTrades: trades };
       })(),
       // Aster
       (async () => {
         const [oi, frHist, ticker] = await Promise.all([
-          cached(`ast-oi-${sym}`, () => Aster.getOI(sym).catch(() => null)),
-          cached(`ast-fr-${sym}`, () => Aster.getFundingHistory(sym, 30).catch(() => null)),
-          cached(`ast-24h-${sym}`, () => Aster.get24hTicker(sym).catch(() => null)),
+          cached(`ast-oi-${sym}-${timeRange}`, () => Aster.getOI(sym).catch(() => null)),
+          cached(`ast-fr-${sym}-${timeRange}`, () => Aster.getFundingHistory(sym, cfg.fundingLimit).catch(() => null)),
+          cached(`ast-24h-${sym}-${timeRange}`, () => Aster.get24hTicker(sym).catch(() => null)),
         ]);
         return { oi, fundingHistory: frHist, ticker };
       })(),
       // Coinglass aggregated
-      cached('liquidations', cg.getLiquidationCoinList),
-      cached(`transfers-${sym}`, () => cg.getChainTransfers(sym, 100).catch(() => null)),
+      cached(`liquidations-${timeRange}`, cg.getLiquidationCoinList),
+      cached(`transfers-${sym}-${timeRange}`, () => cg.getChainTransfers(sym, 100).catch(() => null)),
     ]);
 
     const cgLiq = cgLiqs?.find(l => l.symbol === sym);
@@ -207,7 +267,7 @@ app.get('/api/analyze/:symbol', async (req, res) => {
       aggregated: { liquidation: cgLiq, transfers: cgTransfers?.slice(0, 30) },
     });
   } catch (e) {
-    console.error(e);
+    console.error('[analyze]', e);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -215,16 +275,16 @@ app.get('/api/analyze/:symbol', async (req, res) => {
 // === Quick scan ===
 app.get('/api/scan', async (req, res) => {
   try {
+    const scanCfg = TIME_RANGE_CONFIG['24h'];
     const allSignals = [];
     for (const sym of TOP_SYMBOLS.slice(0, 15)) {
       try {
-        const pair = sym + 'USDT';
         const [oiHist, frHist, klines, ls, taker] = await Promise.all([
-          cached(`bn-oi-${sym}`, () => Binance.getOIHistory(sym, '1h', 48)),
-          cached(`bn-fr-${sym}`, () => Binance.getFundingHistory(sym, 30)),
-          cached(`bn-kl-${sym}`, () => Binance.getKlines(sym, '1h', 48)),
-          cached(`bn-ls-${sym}`, () => Binance.getLSRatio(sym, '1h', 12)),
-          cached(`bn-tk-${sym}`, () => Binance.getTakerVolume(sym, '1h', 12)),
+          cached(`bn-oi-${sym}`, () => Binance.getOIHistory(sym, scanCfg.bnOiPeriod, scanCfg.bnOiLimit)),
+          cached(`bn-fr-${sym}`, () => Binance.getFundingHistory(sym, scanCfg.fundingLimit)),
+          cached(`bn-kl-${sym}`, () => Binance.getKlines(sym, scanCfg.klInterval, scanCfg.klLimit)),
+          cached(`bn-ls-${sym}`, () => Binance.getLSRatio(sym, scanCfg.lsPeriod, scanCfg.lsLimit)),
+          cached(`bn-tk-${sym}`, () => Binance.getTakerVolume(sym, scanCfg.takerPeriod, scanCfg.takerLimit)),
         ]);
         const liquidations = await cached('liquidations', cg.getLiquidationCoinList);
         const liq = liquidations?.find(l => l.symbol === sym);
@@ -237,10 +297,47 @@ app.get('/api/scan', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// CG endpoints
-app.get('/api/cg/oi/:symbol', async (req, res) => { res.json({ ok: true, data: await cg.getOIByExchange(req.params.symbol.toUpperCase()) }); });
-app.get('/api/cg/funding/:symbol', async (req, res) => { res.json({ ok: true, data: await cg.getFundingByExchange(req.params.symbol.toUpperCase()) }); });
-app.get('/api/transfers/:symbol', async (req, res) => { res.json({ ok: true, data: await cg.getChainTransfers(req.params.symbol.toUpperCase(), 100) }); });
+// CG endpoints — with error handling
+app.get('/api/cg/oi/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ ok: false, error: 'Invalid symbol' });
+    res.json({ ok: true, data: await cg.getOIByExchange(sym) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 
+app.get('/api/cg/funding/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ ok: false, error: 'Invalid symbol' });
+    res.json({ ok: true, data: await cg.getFundingByExchange(sym) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.get('/api/transfers/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol.toUpperCase();
+    if (!validateSymbol(sym)) return res.status(400).json({ ok: false, error: 'Invalid symbol' });
+    res.json({ ok: true, data: await cg.getChainTransfers(sym, 100) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// --- Graceful shutdown ---
 const PORT = process.env.PORT || 3456;
-app.listen(PORT, '0.0.0.0', () => console.log(`🐋 Whale Dashboard running on http://localhost:${PORT}`));
+const server = app.listen(PORT, '0.0.0.0', () => console.log(`🐋 Whale Dashboard running on http://localhost:${PORT}`));
+
+function shutdown(signal) {
+  console.log(`\n[${signal}] Shutting down gracefully...`);
+  server.close(() => {
+    console.log('Server closed.');
+    process.exit(0);
+  });
+  // Force exit after 5s if connections hang
+  setTimeout(() => process.exit(1), 5000);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});

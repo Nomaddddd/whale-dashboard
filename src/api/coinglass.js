@@ -1,6 +1,9 @@
 const axios = require('axios');
 
-const API_KEY = process.env.CG_API_KEY || 'eec6cf803b404ec59ce59261f9879f0c';
+const API_KEY = process.env.CG_API_KEY;
+if (!API_KEY) {
+  console.warn('[CG] Warning: CG_API_KEY not set. Coinglass endpoints will fail. Set it in .env or environment.');
+}
 const BASE = 'https://open-api-v4.coinglass.com';
 
 const cg = axios.create({
@@ -19,7 +22,7 @@ async function rateLimit() {
 }
 
 // Retry wrapper
-async function fetch(path, params = {}) {
+async function cgFetch(path, params = {}) {
   await rateLimit();
   try {
     const { data } = await cg.get(path, { params });
@@ -41,37 +44,37 @@ async function fetch(path, params = {}) {
 
 // All coins OI by exchange (with % changes)
 async function getOIByExchange(symbol) {
-  return fetch('/api/futures/open-interest/exchange-list', { symbol });
+  return cgFetch('/api/futures/open-interest/exchange-list', { symbol });
 }
 
 // All coins funding rate by exchange
 async function getFundingByExchange(symbol) {
-  return fetch('/api/futures/funding-rate/exchange-list', { symbol });
+  return cgFetch('/api/futures/funding-rate/exchange-list', { symbol });
 }
 
 // All coins liquidation summary
 async function getLiquidationCoinList() {
-  return fetch('/api/futures/liquidation/coin-list');
+  return cgFetch('/api/futures/liquidation/coin-list');
 }
 
 // Liquidation by exchange for specific coin
 async function getLiquidationByExchange(symbol, range = '24h') {
-  return fetch('/api/futures/liquidation/exchange-list', { symbol, range });
+  return cgFetch('/api/futures/liquidation/exchange-list', { symbol, range });
 }
 
 // On-chain exchange transfers (inflow/outflow)
 async function getChainTransfers(coin, limit = 50) {
-  return fetch('/api/exchange/chain/tx/list', { coin, limit });
+  return cgFetch('/api/exchange/chain/tx/list', { coin, limit });
 }
 
 // Supported coins list
 async function getSupportedCoins() {
-  return fetch('/api/futures/supported-coins');
+  return cgFetch('/api/futures/supported-coins');
 }
 
 // Fear & Greed Index
 async function getFearGreed() {
-  return fetch('/api/index/fear-greed-history');
+  return cgFetch('/api/index/fear-greed-history');
 }
 
 // === Batch: get all major data for dashboard ===

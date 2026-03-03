@@ -31,6 +31,10 @@
     .price-sub{font-size:11px;color:var(--dim)}
 
     .topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .tr-btn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap;font-weight:600;transition:all .15s;font-variant-numeric:tabular-nums}
+    .tr-btn:hover{border-color:var(--accent);color:var(--text)}
+    .tr-btn.active{background:rgba(46,207,162,.15);color:var(--accent);border-color:var(--accent)}
+    .tr-group{display:flex;align-items:center;gap:3px}
     .fg-badge{padding:4px 8px;border-radius:5px;font-size:11px;font-weight:600}
     .ts-label{font-size:10px;color:var(--dim)}
 
@@ -111,6 +115,7 @@
     </div>
   </div>
   <div class="topbar-right">
+    <div class="tr-group" id="time-ranges"></div>
     <div class="fg-badge" id="fg" style="background:rgba(255,255,255,.1)">F&G --</div>
     <div class="ts-label" id="ts">--</div>
   </div>
@@ -119,17 +124,17 @@
 <!-- Indicator Add Bar -->
 <div class="indicator-bar">
   <span class="ind-label">添加指标:</span>
-  <button class="ind-btn" onclick="addWidget('oi-chart')">📊 OI趋势</button>
-  <button class="ind-btn" onclick="addWidget('funding-chart')">💰 费率历史</button>
-  <button class="ind-btn" onclick="addWidget('funding-compare')">🔀 跨所费率</button>
-  <button class="ind-btn" onclick="addWidget('ls-ratio')">📐 多空比</button>
-  <button class="ind-btn" onclick="addWidget('taker')">🔥 买卖量</button>
-  <button class="ind-btn" onclick="addWidget('liquidation')">💥 爆仓</button>
-  <button class="ind-btn" onclick="addWidget('okx-liqs')">💥 OKX爆仓明细</button>
-  <button class="ind-btn" onclick="addWidget('hl-trades')">🟢 HL大额成交</button>
-  <button class="ind-btn" onclick="addWidget('transfers')">🔗 链上转账</button>
-  <button class="ind-btn" onclick="addWidget('oi-exchange')">🏦 各所OI</button>
-  <button class="ind-btn" onclick="addWidget('aster-funding')">🟣 Aster费率</button>
+  <button type="button" class="ind-btn" onclick="addWidget('oi-chart')">📊 OI趋势</button>
+  <button type="button" class="ind-btn" onclick="addWidget('funding-chart')">💰 费率历史</button>
+  <button type="button" class="ind-btn" onclick="addWidget('funding-compare')">🔀 跨所费率</button>
+  <button type="button" class="ind-btn" onclick="addWidget('ls-ratio')">📐 多空比</button>
+  <button type="button" class="ind-btn" onclick="addWidget('taker')">🔥 买卖量</button>
+  <button type="button" class="ind-btn" onclick="addWidget('liquidation')">💥 爆仓</button>
+  <button type="button" class="ind-btn" onclick="addWidget('okx-liqs')">💥 OKX爆仓明细</button>
+  <button type="button" class="ind-btn" onclick="addWidget('hl-trades')">🟢 HL大额成交</button>
+  <button type="button" class="ind-btn" onclick="addWidget('transfers')">🔗 链上转账</button>
+  <button type="button" class="ind-btn" onclick="addWidget('oi-exchange')">🏦 各所OI</button>
+  <button type="button" class="ind-btn" onclick="addWidget('aster-funding')">🟣 Aster费率</button>
 </div>
 
 <!-- Alert strip -->
@@ -141,8 +146,9 @@
 </div>
 
 <script>
-let G, currentSymbol = 'BTC', analysisData = null;
+let G, currentSymbol = 'BTC', currentTimeRange = '4h', analysisData = null;
 const TOP = ['BTC','ETH','SOL','XRP','BNB','DOGE','ADA','AVAX','LINK','SUI','DOT','PEPE','NEAR','WIF','ARB','OP','APT','AAVE','UNI','INJ'];
+const TIME_RANGES = ['15m','30m','1h','4h','12h','24h','3d','7d'];
 
 // Init
 function init() {
@@ -154,6 +160,16 @@ function init() {
     b.textContent = s;
     b.onclick = () => selectTicker(s);
     el.appendChild(b);
+  });
+
+  const tr = document.getElementById('time-ranges');
+  TIME_RANGES.forEach(range => {
+    const b = document.createElement('button');
+    b.className = 'tr-btn' + (range === currentTimeRange ? ' active' : '');
+    b.textContent = range;
+    b.dataset.range = range;
+    b.onclick = () => selectTimeRange(range);
+    tr.appendChild(b);
   });
 
   G = GridStack.init({
@@ -174,7 +190,17 @@ function init() {
 
 function selectTicker(sym) {
   currentSymbol = sym;
-  document.querySelectorAll('.ticker-btn').forEach(b => b.classList.toggle('active', b.textContent === sym));
+  document.querySelectorAll('.ticker-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === sym);
+  });
+  loadData();
+}
+
+function selectTimeRange(range) {
+  currentTimeRange = range;
+  document.querySelectorAll('.tr-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.range === range);
+  });
   loadData();
 }
 
@@ -188,7 +214,7 @@ function fRcls(n){return n>0.0001?'pos':n<-0.0001?'neg':'neu'}
 async function loadData() {
   try {
     const [analysis, dashboard] = await Promise.all([
-      fetch(`/api/analyze/${currentSymbol}`).then(r=>r.json()),
+      fetch(`/api/analyze/${currentSymbol}?timeRange=${currentTimeRange}`).then(r=>r.json()),
       fetch('/api/dashboard').then(r=>r.json()),
     ]);
     analysisData = analysis;
@@ -230,11 +256,45 @@ async function loadData() {
 
     // Render all widgets
     renderAllWidgets();
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    console.error('[loadData]', e);
+    const alertEl = document.getElementById('alerts');
+    alertEl.className = 'alert-strip show danger';
+    alertEl.innerHTML = '<div class="alert-chip danger">⚡ API Error: '+e.message+'</div>';
+  }
 }
 
 // Charts cache
-const charts = {};
+const chartInstances = new Map(); // id -> { chart, series, onCrosshairMove }
+
+function cleanupChartInstance(id) {
+  const prev = chartInstances.get(id);
+  if (prev) {
+    try { prev.chart.unsubscribeCrosshairMove(prev.onCrosshairMove); } catch(e){}
+    try { prev.chart.remove(); } catch(e){}
+    chartInstances.delete(id);
+  }
+}
+
+function registerChartInstance(id, chart, series) {
+  const onCrosshairMove = (param) => {
+    if (!param.time) {
+      for (const [otherId, other] of chartInstances) {
+        if (otherId !== id) {
+          try { other.chart.clearCrosshairPosition(); } catch(e){}
+        }
+      }
+      return;
+    }
+    for (const [otherId, other] of chartInstances) {
+      if (otherId !== id) {
+        try { other.chart.setCrosshairPosition(undefined, param.time, other.series); } catch(e){}
+      }
+    }
+  };
+  chart.subscribeCrosshairMove(onCrosshairMove);
+  chartInstances.set(id, { chart, series, onCrosshairMove });
+}
 
 function renderAllWidgets() {
   document.querySelectorAll('.grid-stack-item').forEach(el => {
@@ -260,7 +320,7 @@ function renderWidget(type, container) {
       const data = bn.oiHistory;
       if(!data?.length) return;
       container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
-      if(charts[id]) charts[id].remove();
+      cleanupChartInstance(id);
       const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
       const series = c.addAreaSeries({
         lineColor: '#2ecfa2', topColor: 'rgba(46,207,162,.3)', bottomColor: 'rgba(46,207,162,.02)',
@@ -268,7 +328,7 @@ function renderWidget(type, container) {
       });
       series.setData(data.map(d=>({time:d.ts/1000, value:d.oiValue})));
       c.timeScale().fitContent();
-      charts[id] = c;
+      registerChartInstance(id, c, series);
       // Update header value
       const hdr = container.parentElement.querySelector('.wt-val');
       if(hdr) hdr.textContent = '$'+fU(data[data.length-1].oiValue);
@@ -279,7 +339,7 @@ function renderWidget(type, container) {
       const data = bn.fundingHistory;
       if(!data?.length) return;
       container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
-      if(charts[id]) charts[id].remove();
+      cleanupChartInstance(id);
       const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
       const series = c.addHistogramSeries({
         color: '#2ecfa2',
@@ -290,7 +350,7 @@ function renderWidget(type, container) {
         color: d.rate > 0.0001 ? '#ef4444' : d.rate < -0.0001 ? '#22c55e' : '#71717a',
       })));
       c.timeScale().fitContent();
-      charts[id] = c;
+      registerChartInstance(id, c, series);
       const hdr = container.parentElement.querySelector('.wt-val');
       if(hdr) hdr.textContent = fR(data[data.length-1].rate);
       break;
@@ -317,14 +377,14 @@ function renderWidget(type, container) {
       const data = bn.lsRatio;
       if(!data?.length) return;
       container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
-      if(charts[id]) charts[id].remove();
+      cleanupChartInstance(id);
       const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
       const longS = c.addAreaSeries({ lineColor:'#22c55e', topColor:'rgba(34,197,94,.2)', bottomColor:'rgba(34,197,94,.01)', lineWidth:1.5 });
       const shortS = c.addAreaSeries({ lineColor:'#ef4444', topColor:'rgba(239,68,68,.2)', bottomColor:'rgba(239,68,68,.01)', lineWidth:1.5 });
       longS.setData(data.map(d=>({time:d.ts/1000, value:d.longRatio*100})));
       shortS.setData(data.map(d=>({time:d.ts/1000, value:d.shortRatio*100})));
       c.timeScale().fitContent();
-      charts[id] = c;
+      registerChartInstance(id, c, longS);
       const latest = data[data.length-1];
       const hdr = container.parentElement.querySelector('.wt-val');
       if(hdr) hdr.textContent = `多${(latest.longRatio*100).toFixed(1)}% 空${(latest.shortRatio*100).toFixed(1)}%`;
@@ -335,7 +395,7 @@ function renderWidget(type, container) {
       const data = bn.takerVolume;
       if(!data?.length) return;
       container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
-      if(charts[id]) charts[id].remove();
+      cleanupChartInstance(id);
       const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
       const series = c.addHistogramSeries({});
       series.setData(data.map(d=>({
@@ -344,7 +404,7 @@ function renderWidget(type, container) {
         color: d.buySellRatio > 1 ? 'rgba(34,197,94,.7)' : 'rgba(239,68,68,.7)',
       })));
       c.timeScale().fitContent();
-      charts[id] = c;
+      registerChartInstance(id, c, series);
       const latest = data[data.length-1];
       const hdr = container.parentElement.querySelector('.wt-val');
       if(hdr) hdr.textContent = latest.buySellRatio.toFixed(3);
@@ -436,7 +496,7 @@ function renderWidget(type, container) {
       const data = ast.fundingHistory;
       if(!data?.length) { container.innerHTML='<div class="loading-widget">无数据</div>'; return; }
       container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
-      if(charts[id]) charts[id].remove();
+      cleanupChartInstance(id);
       const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
       const series = c.addHistogramSeries({});
       series.setData(data.map(d=>({
@@ -445,7 +505,7 @@ function renderWidget(type, container) {
         color: d.rate > 0.0001 ? '#8b5cf6' : d.rate < -0.0001 ? '#50e3c2' : '#71717a',
       })));
       c.timeScale().fitContent();
-      charts[id] = c;
+      registerChartInstance(id, c, series);
       const hdr = container.parentElement.querySelector('.wt-val');
       if(hdr) hdr.textContent = fR(data[data.length-1].rate);
       break;
@@ -506,17 +566,25 @@ function chartOpts() {
     grid: { vertLines: { color: 'rgba(255,255,255,.03)' }, horzLines: { color: 'rgba(255,255,255,.03)' } },
     timeScale: { borderColor: 'rgba(255,255,255,.05)', timeVisible: true },
     rightPriceScale: { borderColor: 'rgba(255,255,255,.05)' },
-    crosshair: { mode: 0 },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+      vertLine: { color: 'rgba(46,207,162,.3)', width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: '#1c1c2e' },
+      horzLine: { color: 'rgba(46,207,162,.3)', width: 1, style: LightweightCharts.LineStyle.Dashed, labelBackgroundColor: '#1c1c2e' },
+    },
     handleScale: false,
     handleScroll: false,
   };
 }
 
-// Resize charts on grid resize
+// Debounced resize handler for charts
+let resizeTimer;
 function onResize() {
-  Object.values(charts).forEach(c => {
-    try { c.applyOptions({ width: 0 }); c.timeScale().fitContent(); } catch(e){}
-  });
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    chartInstances.forEach(({ chart }) => {
+      try { chart.applyOptions({ width: 0 }); chart.timeScale().fitContent(); } catch(e){}
+    });
+  }, 150);
 }
 window.addEventListener('resize', onResize);
 
