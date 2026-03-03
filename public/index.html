@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🐋 Whale Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-all.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.3.1/dist/gridstack-extra.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root{--bg:#0a0a0f;--card:#111119;--border:#1c1c2e;--accent:#2ecfa2;--red:#ef4444;--orange:#f59e0b;--green:#22c55e;--text:#e4e4e7;--dim:#71717a;--bright:#fafafa}
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+    /* Top bar: ticker selector + price */
+    .topbar{display:flex;align-items:center;gap:16px;padding:10px 20px;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0}
+    .logo{font-size:16px;font-weight:700;color:var(--bright);white-space:nowrap}
+    .logo span{color:var(--accent)}
+
+    .ticker-select{display:flex;align-items:center;gap:4px;overflow-x:auto;flex:1}
+    .ticker-btn{background:transparent;border:1px solid var(--border);color:var(--dim);padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap;font-weight:500;transition:all .15s}
+    .ticker-btn:hover{border-color:var(--accent);color:var(--text)}
+    .ticker-btn.active{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:700}
+
+    .price-bar{display:flex;align-items:center;gap:20px;flex-shrink:0}
+    .price-group{text-align:right}
+    .price-label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+    .price-value{font-size:20px;font-weight:700;color:var(--bright);font-variant-numeric:tabular-nums}
+    .price-change{font-size:12px;font-weight:600}
+    .price-sub{font-size:11px;color:var(--dim)}
+
+    .topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .fg-badge{padding:4px 8px;border-radius:5px;font-size:11px;font-weight:600}
+    .ts-label{font-size:10px;color:var(--dim)}
+
+    /* Indicator selector */
+    .indicator-bar{display:flex;align-items:center;gap:6px;padding:6px 20px;background:rgba(17,17,25,.8);border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
+    .ind-btn{background:var(--card);border:1px solid var(--border);color:var(--dim);padding:3px 8px;border-radius:4px;font-size:10px;cursor:pointer;white-space:nowrap}
+    .ind-btn:hover{border-color:var(--accent);color:var(--text)}
+    .ind-label{font-size:10px;color:var(--dim);margin-right:4px}
+
+    /* Alert strip */
+    .alert-strip{padding:6px 20px;font-size:11px;flex-shrink:0;display:none}
+    .alert-strip.show{display:flex;gap:12px;overflow-x:auto;align-items:center}
+    .alert-strip.danger{background:rgba(239,68,68,.08);border-bottom:1px solid rgba(239,68,68,.2)}
+    .alert-strip.ok{background:rgba(46,207,162,.05);border-bottom:1px solid rgba(46,207,162,.1)}
+    .alert-chip{display:flex;align-items:center;gap:4px;padding:2px 6px;border-radius:3px;white-space:nowrap;font-size:10px}
+    .alert-chip.danger{background:rgba(239,68,68,.15);color:var(--red)}
+    .alert-chip.warning{background:rgba(245,158,11,.15);color:var(--orange)}
+
+    /* Grid area */
+    .grid-wrap{flex:1;overflow:auto;padding:8px}
+    .grid-stack-item-content{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+    .wh{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--border);cursor:move;flex-shrink:0}
+    .wt{font-size:10px;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+    .wt-ex{font-size:9px;padding:1px 4px;border-radius:3px;margin-left:6px}
+    .wt-ex.bn{background:rgba(240,185,11,.15);color:#F0B90B}
+    .wt-ex.okx{background:rgba(255,255,255,.1);color:#fff}
+    .wt-ex.hl{background:rgba(80,227,194,.15);color:#50e3c2}
+    .wt-ex.ast{background:rgba(139,92,246,.15);color:#8b5cf6}
+    .wt-ex.cg{background:rgba(46,207,162,.15);color:var(--accent)}
+    .wt-val{font-size:12px;font-weight:600;color:var(--bright)}
+    .wb{flex:1;overflow:hidden;position:relative}
+    .chart-container{width:100%;height:100%;position:absolute;top:0;left:0}
+
+    /* Mini data panels inside widgets */
+    .mini-table{width:100%;font-size:10px;border-collapse:collapse}
+    .mini-table td{padding:3px 6px;border-bottom:1px solid rgba(255,255,255,.03)}
+    .mini-table .label{color:var(--dim)}
+    .mini-table .val{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+    .pos{color:var(--green)}.neg{color:var(--red)}.neu{color:var(--dim)}
+
+    /* Funding comparison bar */
+    .fr-compare{display:flex;gap:2px;padding:6px;height:100%}
+    .fr-col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px}
+    .fr-bar{width:100%;border-radius:2px 2px 0 0;min-height:2px;transition:height .3s}
+    .fr-label{font-size:8px;color:var(--dim);text-transform:uppercase}
+    .fr-val{font-size:10px;font-weight:600;font-variant-numeric:tabular-nums}
+
+    /* Liq bar */
+    .liq-bars{display:flex;align-items:center;gap:4px;padding:8px;height:100%}
+    .liq-bar-wrap{flex:1;display:flex;flex-direction:column;gap:2px}
+    .liq-bar-label{font-size:9px;color:var(--dim)}
+    .liq-bar-row{display:flex;height:16px;border-radius:3px;overflow:hidden}
+    .liq-long{background:var(--red)}
+    .liq-short{background:var(--green)}
+    .liq-bar-val{font-size:10px;font-weight:600;margin-top:1px}
+
+    .loading-widget{display:flex;align-items:center;justify-content:center;height:100%;color:var(--dim);font-size:11px}
+  </style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="logo">🐋 <span>Whale</span></div>
+  <div class="ticker-select" id="tickers"></div>
+  <div class="price-bar" id="price-bar">
+    <div class="price-group">
+      <div class="price-label">Spot</div>
+      <div class="price-value" id="spot-price">--</div>
+    </div>
+    <div class="price-group">
+      <div class="price-label">Perp</div>
+      <div class="price-value" id="perp-price">--</div>
+    </div>
+    <div>
+      <div class="price-change" id="price-change">--</div>
+      <div class="price-sub" id="price-vol">Vol --</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="fg-badge" id="fg" style="background:rgba(255,255,255,.1)">F&G --</div>
+    <div class="ts-label" id="ts">--</div>
+  </div>
+</div>
+
+<!-- Indicator Add Bar -->
+<div class="indicator-bar">
+  <span class="ind-label">添加指标:</span>
+  <button class="ind-btn" onclick="addWidget('oi-chart')">📊 OI趋势</button>
+  <button class="ind-btn" onclick="addWidget('funding-chart')">💰 费率历史</button>
+  <button class="ind-btn" onclick="addWidget('funding-compare')">🔀 跨所费率</button>
+  <button class="ind-btn" onclick="addWidget('ls-ratio')">📐 多空比</button>
+  <button class="ind-btn" onclick="addWidget('taker')">🔥 买卖量</button>
+  <button class="ind-btn" onclick="addWidget('liquidation')">💥 爆仓</button>
+  <button class="ind-btn" onclick="addWidget('okx-liqs')">💥 OKX爆仓明细</button>
+  <button class="ind-btn" onclick="addWidget('hl-trades')">🟢 HL大额成交</button>
+  <button class="ind-btn" onclick="addWidget('transfers')">🔗 链上转账</button>
+  <button class="ind-btn" onclick="addWidget('oi-exchange')">🏦 各所OI</button>
+  <button class="ind-btn" onclick="addWidget('aster-funding')">🟣 Aster费率</button>
+</div>
+
+<!-- Alert strip -->
+<div class="alert-strip" id="alerts"></div>
+
+<!-- Grid -->
+<div class="grid-wrap">
+  <div class="grid-stack" id="grid"></div>
+</div>
+
+<script>
+let G, currentSymbol = 'BTC', analysisData = null;
+const TOP = ['BTC','ETH','SOL','XRP','BNB','DOGE','ADA','AVAX','LINK','SUI','DOT','PEPE','NEAR','WIF','ARB','OP','APT','AAVE','UNI','INJ'];
+
+// Init
+function init() {
+  // Ticker buttons
+  const el = document.getElementById('tickers');
+  TOP.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'ticker-btn' + (s === currentSymbol ? ' active' : '');
+    b.textContent = s;
+    b.onclick = () => selectTicker(s);
+    el.appendChild(b);
+  });
+
+  G = GridStack.init({
+    column: 12, cellHeight: 50, margin: 4, animate: true, float: true,
+    draggable: { handle: '.wh' }, resizable: { handles: 'se,sw,e,w' },
+  });
+
+  // Default layout
+  addWidget('oi-chart', 0, 0, 6, 5);
+  addWidget('funding-chart', 6, 0, 6, 5);
+  addWidget('funding-compare', 0, 5, 4, 4);
+  addWidget('ls-ratio', 4, 5, 4, 4);
+  addWidget('liquidation', 8, 5, 4, 4);
+
+  loadData();
+  setInterval(loadData, 30000);
+}
+
+function selectTicker(sym) {
+  currentSymbol = sym;
+  document.querySelectorAll('.ticker-btn').forEach(b => b.classList.toggle('active', b.textContent === sym));
+  loadData();
+}
+
+// Format helpers
+function fU(n){if(!n&&n!==0)return'--';if(n>=1e9)return(n/1e9).toFixed(2)+'B';if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'K';return n.toFixed(0)}
+function fPr(n){if(!n)return'--';return n>=1000?'$'+n.toLocaleString('en',{maximumFractionDigits:2}):n>=1?'$'+n.toFixed(4):'$'+n.toFixed(6)}
+function fR(n){if(n==null)return'--';const p=n*100;return(p>0?'+':'')+p.toFixed(4)+'%'}
+function fRcls(n){return n>0.0001?'pos':n<-0.0001?'neg':'neu'}
+
+// Load data for current ticker
+async function loadData() {
+  try {
+    const [analysis, dashboard] = await Promise.all([
+      fetch(`/api/analyze/${currentSymbol}`).then(r=>r.json()),
+      fetch('/api/dashboard').then(r=>r.json()),
+    ]);
+    analysisData = analysis;
+
+    // Update price bar
+    const bn = analysis.exchanges?.binance;
+    const ticker = bn?.ticker;
+    if(ticker) {
+      document.getElementById('spot-price').textContent = fPr(ticker.price);
+      document.getElementById('perp-price').textContent = fPr(ticker.price); // TODO: separate spot
+      const ch = ticker.change24h;
+      const chEl = document.getElementById('price-change');
+      chEl.textContent = (ch>0?'+':'')+ch.toFixed(2)+'%';
+      chEl.className = 'price-change '+(ch>0?'pos':'neg');
+      document.getElementById('price-vol').textContent = 'Vol $'+fU(ticker.volume24h);
+    }
+
+    // Fear & Greed
+    if(dashboard.fearGreed?.data_list) {
+      const v = dashboard.fearGreed.data_list[0];
+      const el = document.getElementById('fg');
+      el.textContent = 'F&G '+v;
+      el.style.background = v>75?'rgba(34,197,94,.2)':v>50?'rgba(46,207,162,.2)':v>25?'rgba(245,158,11,.2)':'rgba(239,68,68,.2)';
+      el.style.color = v>75?'var(--green)':v>50?'var(--accent)':v>25?'var(--orange)':'var(--red)';
+    }
+
+    document.getElementById('ts').textContent = new Date().toLocaleTimeString('zh-CN');
+
+    // Alerts
+    const sigs = analysis.signals || [];
+    const alertEl = document.getElementById('alerts');
+    if(sigs.length) {
+      alertEl.className = 'alert-strip show '+(sigs.some(s=>s.level==='danger')?'danger':'ok');
+      alertEl.innerHTML = sigs.map(s=>`<div class="alert-chip ${s.level}">⚡ ${s.title}</div>`).join('');
+    } else {
+      alertEl.className = 'alert-strip show ok';
+      alertEl.innerHTML = '<div style="color:var(--accent);font-size:10px">✅ 暂无异常信号</div>';
+    }
+
+    // Render all widgets
+    renderAllWidgets();
+  } catch(e) { console.error(e); }
+}
+
+// Charts cache
+const charts = {};
+
+function renderAllWidgets() {
+  document.querySelectorAll('.grid-stack-item').forEach(el => {
+    const type = el.getAttribute('data-type');
+    if(type) renderWidget(type, el.querySelector('.wb'));
+  });
+}
+
+function renderWidget(type, container) {
+  if(!analysisData || !container) return;
+  const d = analysisData;
+  const bn = d.exchanges?.binance || {};
+  const ox = d.exchanges?.okx || {};
+  const hl = d.exchanges?.hyperliquid || {};
+  const ast = d.exchanges?.aster || {};
+  const agg = d.aggregated || {};
+  const fc = d.fundingComparison || {};
+
+  const id = container.id;
+
+  switch(type) {
+    case 'oi-chart': {
+      const data = bn.oiHistory;
+      if(!data?.length) return;
+      container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
+      if(charts[id]) charts[id].remove();
+      const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
+      const series = c.addAreaSeries({
+        lineColor: '#2ecfa2', topColor: 'rgba(46,207,162,.3)', bottomColor: 'rgba(46,207,162,.02)',
+        lineWidth: 2,
+      });
+      series.setData(data.map(d=>({time:d.ts/1000, value:d.oiValue})));
+      c.timeScale().fitContent();
+      charts[id] = c;
+      // Update header value
+      const hdr = container.parentElement.querySelector('.wt-val');
+      if(hdr) hdr.textContent = '$'+fU(data[data.length-1].oiValue);
+      break;
+    }
+
+    case 'funding-chart': {
+      const data = bn.fundingHistory;
+      if(!data?.length) return;
+      container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
+      if(charts[id]) charts[id].remove();
+      const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
+      const series = c.addHistogramSeries({
+        color: '#2ecfa2',
+      });
+      series.setData(data.map(d=>({
+        time: d.ts/1000,
+        value: d.rate * 100,
+        color: d.rate > 0.0001 ? '#ef4444' : d.rate < -0.0001 ? '#22c55e' : '#71717a',
+      })));
+      c.timeScale().fitContent();
+      charts[id] = c;
+      const hdr = container.parentElement.querySelector('.wt-val');
+      if(hdr) hdr.textContent = fR(data[data.length-1].rate);
+      break;
+    }
+
+    case 'funding-compare': {
+      const rates = Object.entries(fc).sort((a,b)=>b[1]-a[1]);
+      if(!rates.length) return;
+      const maxAbs = Math.max(...rates.map(([,r])=>Math.abs(r)), 0.0001);
+      const colors = {binance:'#F0B90B',okx:'#ffffff',hyperliquid:'#50e3c2',aster:'#8b5cf6'};
+      container.innerHTML = `<div class="fr-compare">${rates.map(([ex,rate])=>{
+        const pct = Math.abs(rate)/maxAbs*100;
+        const color = rate>0.0001?'var(--red)':rate<-0.0001?'var(--green)':'var(--dim)';
+        return `<div class="fr-col">
+          <div class="fr-val" style="color:${color}">${(rate*100).toFixed(4)}%</div>
+          <div class="fr-bar" style="height:${Math.max(10,pct)}%;background:${colors[ex]||'var(--dim)'}"></div>
+          <div class="fr-label" style="color:${colors[ex]||'var(--dim)'}">${ex.slice(0,3).toUpperCase()}</div>
+        </div>`;
+      }).join('')}</div>`;
+      break;
+    }
+
+    case 'ls-ratio': {
+      const data = bn.lsRatio;
+      if(!data?.length) return;
+      container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
+      if(charts[id]) charts[id].remove();
+      const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
+      const longS = c.addAreaSeries({ lineColor:'#22c55e', topColor:'rgba(34,197,94,.2)', bottomColor:'rgba(34,197,94,.01)', lineWidth:1.5 });
+      const shortS = c.addAreaSeries({ lineColor:'#ef4444', topColor:'rgba(239,68,68,.2)', bottomColor:'rgba(239,68,68,.01)', lineWidth:1.5 });
+      longS.setData(data.map(d=>({time:d.ts/1000, value:d.longRatio*100})));
+      shortS.setData(data.map(d=>({time:d.ts/1000, value:d.shortRatio*100})));
+      c.timeScale().fitContent();
+      charts[id] = c;
+      const latest = data[data.length-1];
+      const hdr = container.parentElement.querySelector('.wt-val');
+      if(hdr) hdr.textContent = `多${(latest.longRatio*100).toFixed(1)}% 空${(latest.shortRatio*100).toFixed(1)}%`;
+      break;
+    }
+
+    case 'taker': {
+      const data = bn.takerVolume;
+      if(!data?.length) return;
+      container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
+      if(charts[id]) charts[id].remove();
+      const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
+      const series = c.addHistogramSeries({});
+      series.setData(data.map(d=>({
+        time: d.ts/1000,
+        value: d.buySellRatio,
+        color: d.buySellRatio > 1 ? 'rgba(34,197,94,.7)' : 'rgba(239,68,68,.7)',
+      })));
+      c.timeScale().fitContent();
+      charts[id] = c;
+      const latest = data[data.length-1];
+      const hdr = container.parentElement.querySelector('.wt-val');
+      if(hdr) hdr.textContent = latest.buySellRatio.toFixed(3);
+      break;
+    }
+
+    case 'liquidation': {
+      const liq = agg.liquidation;
+      if(!liq) return;
+      const l24 = liq.liquidation_usd_24h||0;
+      const long24 = liq.long_liquidation_usd_24h||0;
+      const short24 = liq.short_liquidation_usd_24h||0;
+      const lp = l24>0?(long24/l24*100):50;
+      container.innerHTML = `<div class="liq-bars">
+        <div class="liq-bar-wrap">
+          <div class="liq-bar-label">24h 总爆仓 $${fU(l24)}</div>
+          <div class="liq-bar-row"><div class="liq-long" style="width:${lp}%"></div><div class="liq-short" style="width:${100-lp}%"></div></div>
+          <div style="display:flex;justify-content:space-between"><div class="liq-bar-val neg">多 $${fU(long24)}</div><div class="liq-bar-val pos">空 $${fU(short24)}</div></div>
+          <div class="liq-bar-label" style="margin-top:8px">1h $${fU(liq.liquidation_usd_1h||0)} | 4h $${fU(liq.liquidation_usd_4h||0)}</div>
+        </div>
+      </div>`;
+      break;
+    }
+
+    case 'okx-liqs': {
+      const liqs = ox.liquidations;
+      if(!liqs?.length) { container.innerHTML='<div class="loading-widget">无数据</div>'; return; }
+      container.innerHTML = `<div style="overflow-y:auto;height:100%;padding:4px 8px">
+        <table class="mini-table"><tbody>${liqs.slice(0,20).map(l=>{
+          const t=new Date(l.ts).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+          return `<tr><td class="label">${t}</td><td class="${l.side==='long'?'neg':'pos'}">${l.side==='long'?'多爆':'空爆'}</td><td class="val">${fPr(l.price)}</td><td class="val">${l.size}</td></tr>`;
+        }).join('')}</tbody></table>
+      </div>`;
+      break;
+    }
+
+    case 'hl-trades': {
+      const trades = hl.recentTrades;
+      if(!trades?.length) { container.innerHTML='<div class="loading-widget">无数据</div>'; return; }
+      const big = trades.filter(t=>t.usd>10000);
+      container.innerHTML = `<div style="overflow-y:auto;height:100%;padding:4px 8px">
+        <table class="mini-table"><tbody>${big.slice(0,20).map(t=>{
+          const tm=new Date(t.ts).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+          return `<tr><td class="label">${tm}</td><td class="${t.side==='B'?'pos':'neg'}">${t.side==='B'?'买':'卖'}</td><td class="val">${fPr(t.price)}</td><td class="val">$${fU(t.usd)}</td></tr>`;
+        }).join('')}</tbody></table>
+      </div>`;
+      const hdr = container.parentElement.querySelector('.wt-val');
+      if(hdr && hl.market) hdr.textContent = 'OI $'+fU(hl.market.oiUsd);
+      break;
+    }
+
+    case 'transfers': {
+      const tx = agg.transfers;
+      if(!tx?.length) { container.innerHTML='<div class="loading-widget">无数据</div>'; return; }
+      const big = tx.filter(t=>t.amount_usd>50000);
+      container.innerHTML = `<div style="overflow-y:auto;height:100%;padding:4px 8px">
+        <table class="mini-table"><tbody>${big.slice(0,20).map(t=>{
+          const tm=new Date(t.transaction_time*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+          const isIn = t.transfer_type===1;
+          return `<tr><td class="label">${tm}</td><td class="${isIn?'neg':'pos'}">${isIn?'转入':'转出'}</td><td class="val">$${fU(t.amount_usd)}</td><td class="label">${t.exchange_name||''}</td></tr>`;
+        }).join('')}</tbody></table>
+      </div>`;
+      break;
+    }
+
+    case 'oi-exchange': {
+      // Use Coinglass per-exchange OI from dashboard data (cached)
+      const entries = [
+        {name:'Binance', oi: bn.oiHistory?.slice(-1)[0]?.oiValue},
+        {name:'OKX', oi: ox.oi?.oiUsd},
+        {name:'Hyperliquid', oi: hl.market?.oiUsd},
+        {name:'Aster', oi: ast.oi ? ast.oi.oi * (bn.ticker?.price||0) : null},
+      ].filter(e=>e.oi);
+      const maxOI = Math.max(...entries.map(e=>e.oi));
+      const colors = {Binance:'#F0B90B',OKX:'#fff',Hyperliquid:'#50e3c2',Aster:'#8b5cf6'};
+      container.innerHTML = `<div style="padding:8px;height:100%;display:flex;flex-direction:column;justify-content:center;gap:6px">
+        ${entries.map(e=>`<div style="display:flex;align-items:center;gap:6px">
+          <span style="width:40px;font-size:9px;color:${colors[e.name]||'var(--dim)'};text-align:right">${e.name.slice(0,3)}</span>
+          <div style="flex:1;height:14px;background:var(--border);border-radius:3px;overflow:hidden">
+            <div style="width:${(e.oi/maxOI*100).toFixed(1)}%;height:100%;background:${colors[e.name]||'var(--accent)'};border-radius:3px"></div>
+          </div>
+          <span style="font-size:10px;font-weight:600;width:60px">$${fU(e.oi)}</span>
+        </div>`).join('')}
+      </div>`;
+      break;
+    }
+
+    case 'aster-funding': {
+      const data = ast.fundingHistory;
+      if(!data?.length) { container.innerHTML='<div class="loading-widget">无数据</div>'; return; }
+      container.innerHTML = '<div class="chart-container" id="c-'+id+'"></div>';
+      if(charts[id]) charts[id].remove();
+      const c = LightweightCharts.createChart(document.getElementById('c-'+id), chartOpts());
+      const series = c.addHistogramSeries({});
+      series.setData(data.map(d=>({
+        time: d.ts/1000,
+        value: d.rate * 100,
+        color: d.rate > 0.0001 ? '#8b5cf6' : d.rate < -0.0001 ? '#50e3c2' : '#71717a',
+      })));
+      c.timeScale().fitContent();
+      charts[id] = c;
+      const hdr = container.parentElement.querySelector('.wt-val');
+      if(hdr) hdr.textContent = fR(data[data.length-1].rate);
+      break;
+    }
+  }
+}
+
+const widgetMeta = {
+  'oi-chart':        { title:'OI 趋势', ex:'bn', w:6, h:5 },
+  'funding-chart':   { title:'费率历史', ex:'bn', w:6, h:5 },
+  'funding-compare': { title:'跨所费率', ex:'all', w:4, h:4 },
+  'ls-ratio':        { title:'多空比', ex:'bn', w:4, h:4 },
+  'taker':           { title:'买卖量', ex:'bn', w:4, h:4 },
+  'liquidation':     { title:'爆仓', ex:'cg', w:4, h:4 },
+  'okx-liqs':        { title:'爆仓明细', ex:'okx', w:3, h:5 },
+  'hl-trades':       { title:'大额成交', ex:'hl', w:3, h:5 },
+  'transfers':       { title:'链上转账', ex:'cg', w:3, h:5 },
+  'oi-exchange':     { title:'各所OI', ex:'all', w:4, h:3 },
+  'aster-funding':   { title:'费率', ex:'ast', w:4, h:4 },
+};
+
+let widgetCounter = 0;
+
+function addWidget(type, x, y, w, h) {
+  const meta = widgetMeta[type];
+  if(!meta) return;
+  const wid = 'w-'+(widgetCounter++);
+  const exBadge = meta.ex !== 'all' ? `<span class="wt-ex ${meta.ex}">${
+    {bn:'Binance',okx:'OKX',hl:'HL',ast:'Aster',cg:'CG',all:'ALL'}[meta.ex]||meta.ex
+  }</span>` : '';
+  
+  G.addWidget({
+    x: x ?? undefined, y: y ?? undefined,
+    w: w || meta.w, h: h || meta.h,
+    content: `
+      <div class="wh">
+        <span class="wt">${meta.title}${exBadge}</span>
+        <span class="wt-val"></span>
+      </div>
+      <div class="wb" id="${wid}"><div class="loading-widget">加载中...</div></div>`,
+    id: type+'-'+widgetCounter,
+  });
+
+  // Set data-type on the grid item
+  const items = document.querySelectorAll('.grid-stack-item');
+  const item = items[items.length - 1];
+  item.setAttribute('data-type', type);
+
+  // Render if data exists
+  if(analysisData) {
+    setTimeout(() => renderWidget(type, document.getElementById(wid)), 100);
+  }
+}
+
+function chartOpts() {
+  return {
+    layout: { background: { type: 'solid', color: '#111119' }, textColor: '#71717a', fontSize: 10 },
+    grid: { vertLines: { color: 'rgba(255,255,255,.03)' }, horzLines: { color: 'rgba(255,255,255,.03)' } },
+    timeScale: { borderColor: 'rgba(255,255,255,.05)', timeVisible: true },
+    rightPriceScale: { borderColor: 'rgba(255,255,255,.05)' },
+    crosshair: { mode: 0 },
+    handleScale: false,
+    handleScroll: false,
+  };
+}
+
+// Resize charts on grid resize
+function onResize() {
+  Object.values(charts).forEach(c => {
+    try { c.applyOptions({ width: 0 }); c.timeScale().fitContent(); } catch(e){}
+  });
+}
+window.addEventListener('resize', onResize);
+
+init();
+</script>
+</body>
+</html>
